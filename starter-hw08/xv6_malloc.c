@@ -48,8 +48,10 @@ xfree(void *ap)
 {
   Header *bp, *p;
   //printf("mutex locking\n");
-  if (lockAcq == 0)
-    pthread_mutex_lock(&lock);
+  if (lockAcq == 0) {
+    if(pthread_mutex_lock(&lock) < 0)
+        return;
+  }
   //printf("mutex unlocked\n");  
 
   bp = (Header*)ap - 1;
@@ -68,7 +70,8 @@ xfree(void *ap)
     p->s.ptr = bp;
   freep = p;
   if (lockAcq == 0)
-    pthread_mutex_unlock(&lock);
+    if(pthread_mutex_unlock(&lock) < 0)
+       return;
   //printf("mutex released\n");
 }
 
@@ -102,7 +105,9 @@ xmalloc(uint nbytes)
   nunits = (nbytes + sizeof(Header) - 1)/sizeof(Header) + 1;
  
   //printf("xmalloc locking\n");
-  pthread_mutex_lock(&lock);
+  if(pthread_mutex_lock(&lock) < 0) {
+    return 0;
+  };
   //printf("xmalloc unlcoked\n");
 
   if((prevp = freep) == 0) {
@@ -120,19 +125,25 @@ xmalloc(uint nbytes)
         p->s.size = nunits;
       }
       freep = prevp;
-      pthread_mutex_unlock(&lock);
+      if(pthread_mutex_unlock(&lock) < 0) {
+        return 0;
+      }
      // printf("xmalloc freed nom\n");
       return (void*)(p + 1);
     }
     if(p == freep)
       if((p = morecore(nunits)) == 0) {
        // printf("xmalloc ret err\n");
-        pthread_mutex_unlock(&lock);
+        if(pthread_mutex_unlock(&lock) < 0) {
+            return 0;
+        }
         return 0;
       }
   }
   //printf("xmalloc end return\n");
-  pthread_mutex_unlock(&lock);
+  if(pthread_mutex_unlock(&lock) < 0) {
+    return 0;
+  }
 }
 
 void*
