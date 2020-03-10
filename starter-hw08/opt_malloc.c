@@ -8,7 +8,7 @@
 #include "xmalloc.h"
 #include <sys/mman.h>
 #include <pthread.h>
-
+//#include <stdio.h>
 
 // Memory allocator by Kernighan and Ritchie,
 // The C programming Language, 2nd ed.  Section 8.7.
@@ -23,8 +23,12 @@ static char* sbrk(uint nn) { return 0; }
 */
 // TODO: end of stuff to remove
 
-static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-static int lockAcq = 0;
+static pthread_mutex_t lock[105];
+static int lockAcq[105];
+
+static int pthreadInitComplete = 0;
+
+static pthread_mutex_t singleLock = PTHREAD_MUTEX_INITIALIZER;
 
 typedef long Align;
 
@@ -40,20 +44,29 @@ typedef union header Header;
 
 // TODO: This is shared global data.
 // You're going to want a mutex to protect this.
-static Header base;
-static Header *freep;
+static Header base[105];
+static Header *freep[105];
+
+int getThreadIndex() {
+   long tid = pthread_self();
+   int modulus = tid % 105;
+   //printf("tid: %ld  mod: %d\n", tid, modulus);
+   return modulus;
+}
 
 void
 xfree(void *ap)
 {
   Header *bp, *p;
   //printf("mutex locking\n");
-  if (lockAcq == 0)
-    pthread_mutex_lock(&lock);
+  int threadIndex = 0;
+  threadIndex = getThreadIndex();
+  if (lockAcq[threadIndex] == 0)
+    pthread_mutex_lock(&lock[threadIndex]);
   //printf("mutex unlocked\n");  
 
   bp = (Header*)ap - 1;
-  for(p = freep; !(bp > p && bp < p->s.ptr); p = p->s.ptr)
+  for(p = freep[threadIndex]; !(bp > p && bp < p->s.ptr); p = p->s.ptr)
     if(p >= p->s.ptr && (bp > p || bp < p->s.ptr))
       break;
   if(bp + bp->s.size == p->s.ptr){
@@ -66,9 +79,9 @@ xfree(void *ap)
     p->s.ptr = bp->s.ptr;
   } else
     p->s.ptr = bp;
-  freep = p;
-  if (lockAcq == 0)
-    pthread_mutex_unlock(&lock);
+  freep[threadIndex] = p;
+  if (lockAcq[threadIndex] == 0)
+    pthread_mutex_unlock(&lock[threadIndex]);
   //printf("mutex released\n");
 }
 
@@ -85,29 +98,47 @@ morecore(uint nu)
   if(p == (char*)-1) {
     return 0;
   }
+  int threadIndex = 0;
+  threadIndex = getThreadIndex();
   hp = (Header*)p;
   hp->s.size = nu;
-  lockAcq = 1;
+  lockAcq[threadIndex] = 1;
   xfree((void*)(hp + 1));
-  lockAcq = 0;
-  return freep;
+  lockAcq[threadIndex] = 0;
+  return freep[threadIndex];
 }
+
 
 void*
 xmalloc(uint nbytes)
 {
   Header *p, *prevp;
   uint nunits;
+
+  if(pthreadInitComplete == 0) {
+    pthread_mutex_lock(&singleLock);
+    if(pthreadInitComplete == 0 ) {
+        for(int j = 0; j < 105; j++) {
+            pthread_mutex_init(&lock[j], NULL);
+            lockAcq[j] = 0; 
+        }
+        pthreadInitComplete = 1;
+    }
+    pthread_mutex_unlock(&singleLock);
+  }
+
+  int threadIndex = 0;
+  threadIndex = getThreadIndex();
   
   nunits = (nbytes + sizeof(Header) - 1)/sizeof(Header) + 1;
  
   //printf("xmalloc locking\n");
-  pthread_mutex_lock(&lock);
+  pthread_mutex_lock(&lock[threadIndex]);
   //printf("xmalloc unlcoked\n");
 
-  if((prevp = freep) == 0) {
-    base.s.ptr = freep = prevp = &base;
-    base.s.size = 0;
+  if((prevp = freep[threadIndex]) == 0) {
+    base[threadIndex].s.ptr = freep[threadIndex] = prevp = &base[threadIndex];
+    base[threadIndex].s.size = 0;
   }
   for(p = prevp->s.ptr; ; prevp = p, p = p->s.ptr){
     //printf("add: %p ,size: %ld , bytes: %ld\n", p->s.ptr, p->s.size, nbytes);
@@ -119,20 +150,20 @@ xmalloc(uint nbytes)
         p += p->s.size;
         p->s.size = nunits;
       }
-      freep = prevp;
-      pthread_mutex_unlock(&lock);
+      freep[threadIndex] = prevp;
+      pthread_mutex_unlock(&lock[threadIndex]);
      // printf("xmalloc freed nom\n");
       return (void*)(p + 1);
     }
-    if(p == freep)
+    if(p == freep[threadIndex])
       if((p = morecore(nunits)) == 0) {
        // printf("xmalloc ret err\n");
-        pthread_mutex_unlock(&lock);
+        pthread_mutex_unlock(&lock[threadIndex]);
         return 0;
       }
   }
   //printf("xmalloc end return\n");
-  pthread_mutex_unlock(&lock);
+  pthread_mutex_unlock(&lock[threadIndex]);
 }
 
 void*
@@ -144,6 +175,6 @@ xrealloc(void* prev, size_t nn)
   for(long i = 0; i < nn; i++) {
      newPtr[i] = prevPtr[i];
   }
-  xfree(prev);
+  //xfree(prev);
   return (void *) newPtr;
 }
