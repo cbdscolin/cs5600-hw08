@@ -15,13 +15,7 @@
 //
 // Then copied from xv6.
 
-// TODO: Remove this stuff
 typedef unsigned long uint;
-
-/*
-static char* sbrk(uint nn) { return 0; }
-*/
-// TODO: end of stuff to remove
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static int lockAcq = 0;
@@ -47,12 +41,10 @@ void
 xfree(void *ap)
 {
   Header *bp, *p;
-  //printf("mutex locking\n");
   if (lockAcq == 0) {
     if(pthread_mutex_lock(&lock) < 0)
         return;
   }
-  //printf("mutex unlocked\n");  
 
   bp = (Header*)ap - 1;
   for(p = freep; !(bp > p && bp < p->s.ptr); p = p->s.ptr)
@@ -72,7 +64,6 @@ xfree(void *ap)
   if (lockAcq == 0)
     if(pthread_mutex_unlock(&lock) < 0)
        return;
-  //printf("mutex released\n");
 }
 
 static Header*
@@ -104,18 +95,15 @@ xmalloc(uint nbytes)
   
   nunits = (nbytes + sizeof(Header) - 1)/sizeof(Header) + 1;
  
-  //printf("xmalloc locking\n");
   if(pthread_mutex_lock(&lock) < 0) {
     return 0;
   };
-  //printf("xmalloc unlcoked\n");
 
   if((prevp = freep) == 0) {
     base.s.ptr = freep = prevp = &base;
     base.s.size = 0;
   }
   for(p = prevp->s.ptr; ; prevp = p, p = p->s.ptr){
-    //printf("add: %p ,size: %ld , bytes: %ld\n", p->s.ptr, p->s.size, nbytes);
     if(p->s.size >= nunits){
       if(p->s.size == nunits)
         prevp->s.ptr = p->s.ptr;
@@ -128,19 +116,16 @@ xmalloc(uint nbytes)
       if(pthread_mutex_unlock(&lock) < 0) {
         return 0;
       }
-     // printf("xmalloc freed nom\n");
       return (void*)(p + 1);
     }
     if(p == freep)
       if((p = morecore(nunits)) == 0) {
-       // printf("xmalloc ret err\n");
         if(pthread_mutex_unlock(&lock) < 0) {
             return 0;
         }
         return 0;
       }
   }
-  //printf("xmalloc end return\n");
   if(pthread_mutex_unlock(&lock) < 0) {
     return 0;
   }
@@ -155,6 +140,6 @@ xrealloc(void* prev, size_t nn)
   for(long i = 0; i < nn; i++) {
      newPtr[i] = prevPtr[i];
   }
-  xfree(prev);
+
   return (void *) newPtr;
 }
