@@ -1,0 +1,44 @@
+﻿1. Optimized allocator vs xv6 allocator:
+The test programs were tested on the CCIS server.
+The optimized allocator offered speedup of 129.62 for 15,000 as the input for ivec_main test program. The optimized allocator offered speedup of 35.55 for 25,000 as the input for list_main test program. Clearly, optimized allocator was much faster.
+
++----------------------+--------+-----------+
+|      Allocator       |  xv6   | optimized |
++----------------------+--------+-----------+
+| List Input           | 25,000 |    25,000 |
+| List Time (seconds)  |  10.31 |      0.29 |
+| List Speedup         |      1 |     35.55 |
+| Ivec Input           | 15,000 |    15,000 |
+| Ivec Time (seconds)  |  10.37 |      0.08 |
+| Ivec Speedup         |      1 |    129.62 |
++----------------------+--------+-----------+
+
+2. Optimized allocator vs sys allocator:
+
+The test programs were tested on the CCIS server.
+The optimized allocator offered speedup of 1.323 for 500,000 as the input for ivec_main test program. The optimized allocator offered speedup of 1.3718 for 1,500,000 as the input for list_main test program. Clearly, optimized allocator was faster by about 30 percent
+for these large inputs.
+
++---------------------+-----------+-----------+
+|      Allocator      |    sys    |    opt    |
++---------------------+-----------+-----------+
+| List Input          |   500,000 |   500,000 |
+| List Time (seconds) |     10.68 |      8.07 |
+| List Speedup        |         1 |     1.323 |
+| Ivec Input          | 1,500,000 | 1,500,000 |
+| Ivec Time (seconds) |     10.22 |      7.45 |
+| Ivec Speedup        |         1 |    1.3718 |
++---------------------+-----------+-----------+
+
+3. Techniques used for optimized allocator: 
+
+The optimized allocator uses a combination of bucket memory allocation and multiple arenas to improve performance of the allocator. The bucket memory allocator consists of 20 buckets to allocate memory starting from 1 byte to anythhing greater than 4096 bytes with intermediate ranges. For every xmalloc call, the bucket is initialized with 4MB of memory and subsequent calls for xmalloc use this preallocated memory. Once this memory runs out, the allocator reserves another 4MB of memory and uses this to allocate memory for subsequent calls. The allocator also maintains a datastructure called memchunk to store information related to each block of memory (4 MB). All these memchunks blocks are concatenated as a linked list. Each bucket maintains the record of last memchunk block to enable O(1) malloc efficiency. To reduce lock contention in multithreaded programs, the allocator uses arenas, i.e exclusive buckets for each thread. The threadId is obtained using thread_self() api call, which is used to determine the arena from which the memory can be allocated. The memchunk block also maintains information about the thread to which memory was allocated to from it, so that freeing can be achieved in O(1) efficiency.
+
+4. Reusing memory in optimized allocator:
+The optimized allocator handles reusing memory by releasing the memory whenever xfree function is called. For every xmalloc call, the bucket is initialized with 4MB of memory and subsequent calls for xmalloc use this preallocated memory. The memchunk datastructure stores different kinds of information about this allocated block. The memchunk datastructure stores the information about the number of times memory was allocated from a particular block. Each time xfree() function is called, the memchunk block corresponding to the pointer to be freed is fetched. The count pertaining to the number of allocations from this memchunk block is decremented. Once this count reaches zero, the whole block of memory is freed to the operating system. The xfree function achieves this functionality in O(1) time.
+
+5. Significant challenge in building the optimzed allocator:
+Restricting memory usage by the allocator was a significant challenge in building the optimized allocator. Firstly, it was necessary to free the memory without wasting too much time in xfree() function in order to prevent the program timeouts. This was achieved by using the header to quickly identify the memchunk datastructure corresponding to the pointer to be freed. This implementation provided significant speedup. Secondly, it was necessary to prevent internal fragmentation in each block. This was handled by looking at the allocation patterns of the test program to determe the ranges for each buckets. Thirdly, to prevent excessive memory usage and crashes due to it, it was important to identify the the size of each block. The optimization to prevent lock contention in turn added more blocks that were largely unused. So it was neccessay to identify the appropriate size where mmap calls were reduced, but also the fragmenation is minimal. 
+
+6. Reusing same allocator design while redoing assignment:
+I would follow the same allocator design except for few optimizations. I would alter xmalloc logic to reuse the freed memory locations inside the preallocated 4MB block, instead of waiting for all of the sub-blocks to be cleared and then freeing the whole block using munmap() call. This optimization will help us in reducing the peak memory occupied by the program. I would tweak the xrealloc() logic to prevent data duplication as the test program caches some pointers and reuses them with old adresses even after realloc is called.

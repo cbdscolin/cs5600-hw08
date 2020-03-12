@@ -113,7 +113,7 @@ xmalloc(uint nbytes)
 
     struct memchunk *top, *oldPtr = 0;
     long bytesToAllocate;
-    bytesToAllocate = 4096 * 100 * 32;
+    bytesToAllocate = 4096 * 512;
 
     if(roundedMemory > 40961) {
       bytesToAllocate = PGROUNDUP(nbytes);

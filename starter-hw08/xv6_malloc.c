@@ -140,6 +140,6 @@ xrealloc(void* prev, size_t nn)
   for(long i = 0; i < nn; i++) {
      newPtr[i] = prevPtr[i];
   }
-
+  xfree(prev);
   return (void *) newPtr;
 }
