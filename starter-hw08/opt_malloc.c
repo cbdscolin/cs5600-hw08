@@ -17,10 +17,16 @@ struct memchunk {
     struct memchunk *next;
 };
 
+struct memchunk *chunk32head[21];
+struct memchunk *chunk32tail[21];
+
+/*
 struct memchunk *chunk32head[8];
 struct memchunk *chunk32tail[8];
+*/
 
-int limits[9] = {0, 8, 24, 72, 216, 648, 1944, 4096, 122880};
+int limits[22] = {0, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3192, 4096, 122880};
+//int limits[9] = {0, 8, 24, 72, 216, 648, 1944, 4096, 122880};
 
 void
 xfree(void *ap)
@@ -35,6 +41,20 @@ xfree(void *ap)
 
 int indexForMemory(uint bytes) {
     if(bytes > 4096) {
+        return 21;
+    }
+    
+    for(int i = 0; i < 21; i++) {
+        if(i == 20) {
+            return 20;
+        }
+        if(bytes > limits[i] && bytes <= limits[i+1]) {
+            return i;
+        }
+    }
+
+    /*
+    if(bytes > 4096) {
         return 8;
     }
     
@@ -45,7 +65,7 @@ int indexForMemory(uint bytes) {
         if(bytes > limits[i] && bytes <= limits[i+1]) {
             return i;        
         }
-    }
+    }*/
     return -1;
 }
 
