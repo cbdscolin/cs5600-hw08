@@ -6,6 +6,7 @@
 #include <error.h>
 #include <errno.h>
 
+
 #define PGSIZE 4096
 #define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
 
@@ -17,34 +18,28 @@ static int pthreadInitComplete = 0;
 static pthread_mutex_t singleLock = PTHREAD_MUTEX_INITIALIZER;
 
 struct memchunk {
-    int totalsize;
-    int currentsize;
+    long totalsize;
+    long currentsize;
     char *c;
+    long allocatedChunks;
+    int bucketNo;
     struct memchunk *next;
+};
+
+struct memheader {
+    struct memchunk *head;
 };
 
 struct memchunk *chunk32head[21];
 struct memchunk *chunk32tail[21];
 
 int limits[22] = {0, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3192, 4096, 122880};
-//int limits[9] = {0, 8, 24, 72, 216, 648, 1944, 4096, 122880};
 
 int getThreadIndex() {
    long tid = pthread_self();
    int modulus = tid % 15;
    return modulus;
 }
-
-void
-xfree(void *ap)
-{
-  //printf("Free called %p\n", ap);
-  lockAcq[0] = 0;
-  if(0 == 0) {
-    return;
-  }   
-}
-
 
 int indexForMemory(uint bytes) {
     if(bytes > 4096) {
@@ -60,21 +55,36 @@ int indexForMemory(uint bytes) {
         }
     }
 
-    /*
-    if(bytes > 4096) {
-        return 8;
-    }
-    
-    for(int i = 0; i < 8; i++) {
-        if(i == 7) {
-            return 7;
-        }
-        if(bytes > limits[i] && bytes <= limits[i+1]) {
-            return i;        
-        }
-    }*/
     return -1;
 }
+
+
+void
+xfree(void *freePtr)
+{
+  if(0 == 1) {
+    return;
+  }
+  long memheaderSize = 0;
+  memheaderSize = sizeof(struct memheader *);
+  struct memheader *memAddr = (struct memheader *) ((void*) freePtr - memheaderSize);
+  struct memchunk *memchunkHead = memAddr->head;
+
+  int bucketNo = memchunkHead->bucketNo;
+  if(pthread_mutex_lock(&lock[bucketNo]) < 0) {
+        printf("pthread_lock failed\n");
+        assert(0 == 1);
+  };
+  memchunkHead->allocatedChunks -= 1;
+  if(memchunkHead->allocatedChunks == 0) {
+    munmap(memchunkHead, memchunkHead->totalsize);
+  }
+  if(pthread_mutex_unlock(&lock[bucketNo]) < 0) {
+        printf("pthread_lock failed\n");
+        assert(0 == 1);
+  };    
+}
+
 
 void*
 xmalloc(uint nbytes)
@@ -90,7 +100,6 @@ xmalloc(uint nbytes)
         }
         pthread_mutex_unlock(&singleLock);
     }
-
   
     int bucketNo = indexForMemory(nbytes); 
 
@@ -100,38 +109,48 @@ xmalloc(uint nbytes)
     };
 
     long roundedMemory = limits[bucketNo + 1];
-    //printf("bytes: %ld, rounded: %ld\n", nbytes, roundedMemory);
+
     struct memchunk *top, *oldPtr = 0;
     long bytesToAllocate;
-    bytesToAllocate = 4096 * 1200;
+    bytesToAllocate = 4096 * 1600;
+
     if(roundedMemory > 40961) {
       bytesToAllocate = PGROUNDUP(nbytes);
       roundedMemory = bytesToAllocate;
     }
 
+    long structSize = 0;
+    structSize = sizeof(struct memchunk);
+    structSize = PGROUNDUP(structSize);
+
+    long structPtrSize = 0;
+    structPtrSize = sizeof(struct memheader *);
+
+ //   structPtrSize = 0;
+
     top = chunk32tail[bucketNo];
-    while(top == 0 || top->currentsize + roundedMemory > top->totalsize) {
+    int count = 0;
+    while(top == 0 || (top->currentsize + roundedMemory + structPtrSize) > top->totalsize) {
     if(top == 0) {
-        int structSize = 0;
-        structSize = sizeof(struct memchunk);
-        structSize = PGROUNDUP(structSize);
-        top = mmap(0, structSize + bytesToAllocate, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1 , 0);
+        if(count > 5) {
+            printf("Allocating too much memory %d\n", count);
+            break;
+        }
+        top = mmap(0, structSize + structSize + bytesToAllocate, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1 , 0);
         if(MAP_FAILED == top) {
-            printf("Something failed code: %d\n", errno);
+            printf("Something failed code: %d memory: %ld \n", errno, nbytes);
+           // printf("top %p currentsize: %ld, roundedMem: %ld , structPtrSize: %ld\n", top, top->currentsize, roundedMemory, structPtrSize); 
             perror("mmap failed\n");
             assert(0 == 1);
         }
 
-        top->totalsize = bytesToAllocate;
+        top->totalsize = bytesToAllocate + structSize; //+ structSize - sizeof(struct memchunk);
         top->currentsize = 0;
+        top->allocatedChunks = 0;
+        top->bucketNo = bucketNo;
         char *cl;
         cl = (char *) top + sizeof(struct memchunk);
         //cl = mmap(0, bytesToAllocate, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-        if(cl == MAP_FAILED) {
-            printf("Something failed code: %d, bytes: %ld\n", errno, bytesToAllocate);
-            perror("mmap failed\n");
-            assert(0 == 1);
-        }
         top->c = cl;
         if(oldPtr != 0) {
             oldPtr->next = top;
@@ -142,12 +161,17 @@ xmalloc(uint nbytes)
         top = top->next;
     }
     }
+
     if(chunk32head[bucketNo] == 0) {
         chunk32head[bucketNo] = top;
         chunk32tail[bucketNo] = top;
     }
+    struct memheader *header = (struct memheader*) (top->c + top->currentsize);
+    header->head = top;
+    top->currentsize += structPtrSize;
     char *retAddress = top->c + top->currentsize;
     top->currentsize += roundedMemory;
+    top->allocatedChunks += 1;
     if(pthread_mutex_unlock(&lock[bucketNo]) < 0) {
         printf("pthread_unlock failed\n");
         assert(0 == 1);
@@ -155,19 +179,17 @@ xmalloc(uint nbytes)
 
     return (void*) retAddress;
 
-  //printf("high mem  bucket: %d  nbytes %ld\n", bucketNo, nbytes); 
 }
 
 void*
 xrealloc(void* prev, uint nn)
 {
-  // TODO: Actually build realloc.
   char *prevPtr = (char *) prev;
   char *newPtr = xmalloc(nn);
 
   for(long i = 0; i < nn; i++) {
      newPtr[i] = prevPtr[i];
   }
-  //xfree(prev);
+  printf("realloc called\n");
   return (void *) newPtr;
 }
